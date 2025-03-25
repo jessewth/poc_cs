@@ -1,8 +1,45 @@
 import asyncio
 import chainlit as cl
-from agents import Agent, InputGuardrail, GuardrailFunctionOutput, Runner
+from agents import Agent, InputGuardrail, GuardrailFunctionOutput, Runner, function_tool, handoff
+from agents.extensions.handoff_prompt import prompt_with_handoff_instructions
 from pydantic import BaseModel
 import asyncio
+
+# Define the order database (mock data)
+# In a real-world scenario, this would be replaced with a database query or API call
+order_database = {
+    "TG12345678": {
+        "status": "WaitingToShipping",
+        "date": "2025-03-05",
+        "items": ["D'alba Piedmont 白松露精華水光噴霧 100毫升", "Eoyunggam 御容鑑 煥顏人蔘再生護膚油 30毫升"],
+        "total": 299.99,
+        "tracking": "SF1234567890",
+        "customer_email": "emily.huang782@outlook.com"
+    },
+    "TG23456789": {
+        "status": "WaittingToPay",
+        "date": "2025-03-10",
+        "items": ["Unove 深層受損修護髮膜護髮素-溫暖花香 320毫升", "Color Combos 美妝蛋套裝 3件"],
+        "total": 2499.99,
+        "customer_email": "another@example.com"
+    }
+}
+
+# Define the function tools for order status and tracking
+@function_tool
+def check_order_status(order_id: str) -> str:
+    """查詢訂單狀態"""
+    if order_id in order_database:
+        order = order_database[order_id]
+        return f"訂單編號 {order_id} 目前狀態: {order['status']}，訂單日期: {order['date']}，金額: HK${order['total']}"
+    return f"沒有找到訂單 {order_id}"
+
+@function_tool
+def get_tracking_info(order_id: str) -> str:
+    """查詢物流狀態"""
+    if order_id in order_database and order_database[order_id].get("tracking"):
+        return f"訂單編號 {order_id} 的物流狀態是: {order_database[order_id]['tracking']}"
+    return f"訂單編號 {order_id} 暫無物流資訊或不存在"
 
 class EcommerceOutput(BaseModel):
     is_ecommerce_type: bool
@@ -28,9 +65,13 @@ instructions="""
 7. 提供訂單追蹤的相關資訊和解決方案
 
 請記住：你的專長是處理訂單相關問題，讓顧客清楚了解訂單狀態。
-""")
+""",
+tools=[check_order_status, get_tracking_info]
+)
 
-refund_agent = Agent(name="退款專員", instructions="""
+refund_agent = Agent(name="退款專員", 
+handoff_description="將問題轉交給退款專員",
+instructions="""
 你是莎莎網店的退款與退換貨專業客服代表。請遵循以下指南：
 
 1. 以友善、專業且有禮貌的態度回應顧客
@@ -42,9 +83,13 @@ refund_agent = Agent(name="退款專員", instructions="""
 7. 協助顧客解決退款與退換貨過程中的疑難
 
 請記住：你的專長是處理退款與退換貨相關問題，確保顧客了解退款流程與狀態。
-""")
+""",
+tools=[check_order_status]
+)
 
-complaint_agent = Agent(name="客訴專員", instructions="""
+complaint_agent = Agent(name="客訴專員", 
+handoff_description="將問題轉交給客訴專員",                        
+instructions="""
 你是莎莎網店的客訴處理專業客服代表。請遵循以下指南：
 
 1. 以高度同理心、友善且專業的態度回應顧客
@@ -56,7 +101,29 @@ complaint_agent = Agent(name="客訴專員", instructions="""
 7. 確保顧客的不滿得到妥善處理
 
 請記住：你的專長是處理顧客投訴問題，將負面體驗轉為正面，挽回顧客的信任。
-""")
+""",
+    tools=[check_order_status]
+)
+
+# Define the handoff functions for each agent
+transfer_to_order_specialist = handoff(
+    agent=order_agent,
+    tool_name_override="transfer_to_order_specialist",
+    tool_description_override="當客戶需要查詢訂單狀態或物流資訊時使用此工具。例如：「我想查詢訂單狀態」、「我的包裹到哪了」等情況。"
+)
+
+transfer_to_refund_specialist = handoff(
+    agent=refund_agent,
+    tool_name_override="transfer_to_refund_specialist",
+    tool_description_override="當客戶明確要求退款或退貨時使用此工具。例如：「我想申請退款」、「如何退貨」等情況。"
+)
+
+transfer_to_complaint_specialist = handoff(
+    agent=complaint_agent,
+    tool_name_override="transfer_to_complaint_specialist",
+    tool_description_override="僅當客戶明確表示不滿、投訴或投訴時使用此工具。例如：「我對服務很不滿」、「我要投訴」等情況。"
+)
+
 
 async def ecommerce_guardrail(ctx, agent, input_data):
     result = await Runner.run(guardrail_agent, input_data, context=ctx.context)
@@ -66,17 +133,41 @@ async def ecommerce_guardrail(ctx, agent, input_data):
         tripwire_triggered=not final_output.is_ecommerce_type,
     )
 
-triage_agent = Agent(name="莎莎網店客服", instructions="""
-你負責判斷顧客的問題類型，並將其轉交給適當的客服專員。
-""",
-    handoffs=[order_agent, refund_agent, complaint_agent],
+triage_agent = Agent(name="莎莎網店客服", instructions=prompt_with_handoff_instructions("""
+您是平台的客服前台。您的工作是了解客戶需求並將他們引導至合適的專業客服。請根據以下明確的指引決定如何處理客戶查詢：
+
+1.訂單查詢類問題：
+- 例如：“我想查詢訂單狀態”、“我的包裹什麼時候到”、“能告訴我訂單號XXX的情況嗎”
+- 操作：使用transfer_to_order_specialist工具
+
+2.退款類問題：
+- 例如：“我想申請退款”、“這個產品有問題，我要退貨”、“如何辦理退款”
+- 操作：使用transfer_to_refund_specialist工具
+
+3.投訴類問題：
+- 例如：“我對你們的服務很不滿”、“我要投訴”、“這個體驗太糟糕了”
+- 操作：使用transfer_to_complaint_specialist工具
+
+4.一般問題：
+- 例如：「你們的營業時間是什麼時候」、「如何修改收貨地址」等
+- 操作：直接客戶回答
+
+重要規則：
+- 請嚴格依照上述分類選擇合適的交接工具
+- 不要過度解讀客戶意圖選擇，根據客戶明確表達的需求工具
+- 如果不確定，請先詢問更多信息，而不是急於交接
+- 首次交流時，除非客戶明確表達了申訴或退款需求，否則應先用order_specialist處理
+                                                                                  
+"""),
+    handoffs=[
+        transfer_to_order_specialist, 
+        transfer_to_refund_specialist, 
+        transfer_to_complaint_specialist
+    ],
     input_guardrails=[
         InputGuardrail(guardrail_function=ecommerce_guardrail),
     ],
 )
-
-# Initialize the agent
-#agent = Agent(name="Assistant", instructions="You are a helpful assistant")
 
 @cl.on_message
 async def on_message(message: cl.Message):
