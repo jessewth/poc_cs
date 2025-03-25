@@ -14,7 +14,9 @@ guardrail_agent = Agent(
     output_type=EcommerceOutput,
 )
 
-order_agent = Agent(name="訂單客服", instructions="""
+order_agent = Agent(name="訂單專員", 
+handoff_description="將問題轉交給訂單專員",
+instructions="""
 你是莎莎網店的訂單專業客服代表。請遵循以下指南：
 
 1. 以友善、專業且有禮貌的態度回應顧客
@@ -28,7 +30,7 @@ order_agent = Agent(name="訂單客服", instructions="""
 請記住：你的專長是處理訂單相關問題，讓顧客清楚了解訂單狀態。
 """)
 
-refund_agent = Agent(name="退款客服", instructions="""
+refund_agent = Agent(name="退款專員", instructions="""
 你是莎莎網店的退款與退換貨專業客服代表。請遵循以下指南：
 
 1. 以友善、專業且有禮貌的態度回應顧客
@@ -65,18 +67,7 @@ async def ecommerce_guardrail(ctx, agent, input_data):
     )
 
 triage_agent = Agent(name="莎莎網店客服", instructions="""
-你是莎莎網店的專業客服代表。請遵循以下指南：
-
-1. 以友善、專業且有禮貌的態度回應顧客
-2. 協助解答關於商品、訂單狀態、退換貨政策和付款方式的問題
-3. 優先使用中文回應顧客的詢問
-4. 避免承諾無法確認的配送時間或活動
-5. 若遇到無法解答的問題，請表示會記錄並轉交給專人處理
-6. 提供清晰簡潔的資訊，避免過長或太技術性的回覆
-7. 主動詢問顧客是否還有其他需要協助的事項
-8. 若需要顧客提供個人資料，請說明用途並保證資料安全
-
-請記住：你的目標是有效解決顧客問題，提供優質服務體驗，並展現莎莎網店的專業形象。
+你負責判斷顧客的問題類型，並將其轉交給適當的客服專員。
 """,
     handoffs=[order_agent, refund_agent, complaint_agent],
     input_guardrails=[
