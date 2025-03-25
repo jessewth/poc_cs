@@ -31,7 +31,8 @@ def check_order_status(order_id: str) -> str:
     """查詢訂單狀態"""
     if order_id in order_database:
         order = order_database[order_id]
-        return f"訂單編號 {order_id} 目前狀態: {order['status']}，訂單日期: {order['date']}，金額: HK${order['total']}"
+        items_list = ", ".join(order['items'])
+        return f"訂單編號 {order_id} 目前狀態: {order['status']}，訂單日期: {order['date']}，金額: HK${order['total']}，訂購商品: {items_list}"
     return f"沒有找到訂單 {order_id}"
 
 @function_tool
@@ -47,30 +48,22 @@ class EcommerceOutput(BaseModel):
 
 guardrail_agent = Agent(
     name="問題檢查",
-    instructions="檢查如果使用者詢問的是屬於電商常見問題",
+    instructions="檢查如果使用者詢問的是屬於零售店常見問題",
     output_type=EcommerceOutput,
 )
 
 order_agent = Agent(name="訂單專員", 
-handoff_description="將問題轉交給訂單專員",
+handoff_description="專門處理訂單狀態",
 instructions="""
-你是莎莎網店的訂單專業客服代表。請遵循以下指南：
-
-1. 以友善、專業且有禮貌的態度回應顧客
-2. 專門處理訂單查詢、出貨狀態、物流追蹤等相關問題
-3. 優先使用中文回應顧客的詢問
-4. 避免承諾無法確認的配送時間
-5. 提供清晰簡潔的資訊，避免過長或太技術性的回覆
-6. 主動詢問顧客是否還有其他需要協助的事項
-7. 提供訂單追蹤的相關資訊和解決方案
-
-請記住：你的專長是處理訂單相關問題，讓顧客清楚了解訂單狀態。
+您是電子商務平台的訂單查詢專員。您可以協助客戶查詢訂單狀態和物流資訊。
+您需要取得訂單號碼才能提供協助。如果客戶沒有提供訂單號，請耐心詢問。
+請記住，您的職責只是查詢和提供訂單資訊。如果客戶提出其他需求（如退款或投訴），請向客戶說明您只負責訂單查詢，並建議他們聯絡相關部門。
 """,
 tools=[check_order_status, get_tracking_info]
 )
 
 refund_agent = Agent(name="退款專員", 
-handoff_description="將問題轉交給退款專員",
+handoff_description="專門處理退款問題",
 instructions="""
 你是莎莎網店的退款與退換貨專業客服代表。請遵循以下指南：
 
@@ -88,7 +81,7 @@ tools=[check_order_status]
 )
 
 complaint_agent = Agent(name="客訴專員", 
-handoff_description="將問題轉交給客訴專員",                        
+handoff_description="專門處理客訴問題",                        
 instructions="""
 你是莎莎網店的客訴處理專業客服代表。請遵循以下指南：
 
