@@ -1,6 +1,5 @@
-import asyncio
 import chainlit as cl
-from agents import Agent, InputGuardrail, GuardrailFunctionOutput, Runner, function_tool, handoff
+from agents import Agent, InputGuardrail, GuardrailFunctionOutput, Runner, function_tool, handoff, AsyncOpenAI, OpenAIChatCompletionsModel
 from agents.extensions.handoff_prompt import prompt_with_handoff_instructions
 from pydantic import BaseModel
 import asyncio
@@ -42,16 +41,19 @@ def get_tracking_info(order_id: str) -> str:
         return f"訂單編號 {order_id} 的物流狀態是: {order_database[order_id]['tracking']}"
     return f"訂單編號 {order_id} 暫無物流資訊或不存在"
 
+# Define the guardrail agent for ecommerce type checking
 class EcommerceOutput(BaseModel):
     is_ecommerce_type: bool
     reasoning: str
 
+# Define the guardrail agent
 guardrail_agent = Agent(
     name="問題檢查",
-    instructions="檢查如果使用者詢問的是屬於零售店常見問題",
+    instructions="檢查使用者詢問的是否屬於零售店常見問題",
     output_type=EcommerceOutput,
 )
 
+# Define the agents for order, refund, and complaint handling
 order_agent = Agent(name="訂單專員", 
 handoff_description="專門處理訂單狀態",
 instructions="""
@@ -59,9 +61,11 @@ instructions="""
 您需要取得訂單號碼才能提供協助。如果客戶沒有提供訂單號，請耐心詢問。
 請記住，您的職責只是查詢和提供訂單資訊。如果客戶提出其他需求（如退款或投訴），請向客戶說明您只負責訂單查詢，並建議他們聯絡相關部門。
 """,
-tools=[check_order_status, get_tracking_info]
+tools=[check_order_status, get_tracking_info],
+model="gpt-4o",
 )
 
+# Define the refund agent
 refund_agent = Agent(name="退款專員", 
 handoff_description="專門處理退款問題",
 instructions="""
@@ -77,9 +81,11 @@ instructions="""
 
 請記住：你的專長是處理退款與退換貨相關問題，確保顧客了解退款流程與狀態。
 """,
-tools=[check_order_status]
+tools=[check_order_status],
+model="gpt-4o",
 )
 
+# Define the complaint agent
 complaint_agent = Agent(name="客訴專員", 
 handoff_description="專門處理客訴問題",                        
 instructions="""
@@ -95,7 +101,8 @@ instructions="""
 
 請記住：你的專長是處理顧客投訴問題，將負面體驗轉為正面，挽回顧客的信任。
 """,
-    tools=[check_order_status]
+    tools=[check_order_status],
+    model="o3-mini",
 )
 
 # Define the handoff functions for each agent
@@ -117,7 +124,7 @@ transfer_to_complaint_specialist = handoff(
     tool_description_override="僅當客戶明確表示不滿、投訴或投訴時使用此工具。例如：「我對服務很不滿」、「我要投訴」等情況。"
 )
 
-
+# Define the guardrail function for ecommerce type checking
 async def ecommerce_guardrail(ctx, agent, input_data):
     result = await Runner.run(guardrail_agent, input_data, context=ctx.context)
     final_output = result.final_output_as(EcommerceOutput)
@@ -126,6 +133,7 @@ async def ecommerce_guardrail(ctx, agent, input_data):
         tripwire_triggered=not final_output.is_ecommerce_type,
     )
 
+# Define the main triage agent
 triage_agent = Agent(name="莎莎網店客服", instructions=prompt_with_handoff_instructions("""
 您是平台的客服前台。您的工作是了解客戶需求並將他們引導至合適的專業客服。請根據以下明確的指引決定如何處理客戶查詢：
 
@@ -160,6 +168,7 @@ triage_agent = Agent(name="莎莎網店客服", instructions=prompt_with_handoff
     input_guardrails=[
         InputGuardrail(guardrail_function=ecommerce_guardrail),
     ],
+    model="gpt-3.5-turbo",
 )
 
 @cl.on_message
