@@ -54,7 +54,3 @@ chainlit run app.py --host=127.0.0.1 --port=5000 --headless
 ## 版權與許可 (License)
 
 請依照實際狀況補充或使用專案所採用的開源許可條款，例如 MIT License 或 Apache License。
-
----
-
-這份說明文件內容包含了需求、安裝步驟、執行方法及其他補充資訊，供使用者依循進行專案環境建置與執行。
